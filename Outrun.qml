@@ -2,7 +2,6 @@ import QtQuick 2.3
 import QtGraphicalEffects 1.0 as Effects
 import QtQuick.Shapes 1.0
 
-import "img"
 //                          @@%@@                                                   @@@@                                 
 //                    @@@@@#++#@@@                                             @@@#+++++%@@                              
 //              @@@%#++++++=++++#@@                     @@@           %@%@@  @%=======++++@@                             
@@ -542,7 +541,7 @@ Item {
             }
             Text{
                 x: 50; y: 0; z: 2
-                text: easyFtemp(root.watertemp)
+                text:root.waterunits === 1 ? root.watertemp.toFixed(0) :  easyFtemp(root.watertemp)
                 font.family: sonicMono.name
                 font.pixelSize: 24
                 color: "#F3F300"
@@ -551,7 +550,7 @@ Item {
             }
             Text{
                 x: 148; y: 12; z:2
-                text: root.waterunits === 0 ? 'C' : 'F'
+                text: root.waterunits === 1 ? 'C' : 'F'
                 font.family: sonicMono.name
                 font.pixelSize: 12
                 color: "#F3F300"
@@ -567,7 +566,7 @@ Item {
             }
             Text{
                 x: 150; y: 14; z:1
-                text: root.waterunits === 0 ? 'C' : 'F'
+                text: root.waterunits === 1 ? 'C' : 'F'
                 font.family: sonicMono.name
                 font.pixelSize: 12
                 color: "#000000"
@@ -584,7 +583,7 @@ Item {
             }
             Text{
                 x: 52; y: 0; z: 2
-                text: root.oilpressure.toFixed(1)
+                text: if(root.oilpressureunits === 1) root.oilpressure.toFixed(1); else (root.oilpressure.toFixed(1) * 14.504).toFixed(0)
                 font.family: sonicMono.name
                 font.pixelSize: 24
                 color: "#F3F300"
@@ -600,7 +599,7 @@ Item {
             }
             Text{
                 x: 52; y: 2; z: 1
-                text: root.oilpressure.toFixed(1)
+                text: if(root.oilpressureunits === 1) root.oilpressure.toFixed(1); else (root.oilpressure.toFixed(1) * 14.504).toFixed(0)
                 font.family: sonicMono.name
                 font.pixelSize: 24
                 color: "#000000"
@@ -609,7 +608,7 @@ Item {
             }
             Text{
                 x: 150; y: 14; z:1
-                text: root.oilpressureunits === 0 ? 'PSI' : 'BAR'
+                text: root.oilpressureunits === 1 ? 'PSI' : 'BAR'
                 font.family: sonicMono.name
                 font.pixelSize: 12
                 color: "#000000"
@@ -634,7 +633,7 @@ Item {
             }
             Text{
                 x: 158; y: 12; z:2
-                text: root.oiltempunits === 0 ? 'C' : 'F'
+                text: root.oiltempunits === 1 ? 'C' : 'F'
                 font.family: sonicMono.name
                 font.pixelSize: 12
                 color: "#F3F300"
@@ -650,7 +649,7 @@ Item {
             }
             Text{
                 x: 158; y: 14; z:1
-                text: root.oiltempunits === 0 ? 'C' : 'F'
+                text: root.oiltempunits === 1 ? 'C' : 'F'
                 font.family: sonicMono.name
                 font.pixelSize: 12
                 color: "#000000"

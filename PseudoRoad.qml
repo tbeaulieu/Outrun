@@ -1,17 +1,32 @@
 import QtQuick 2.3
-import QtQuick.Shapes 1.0
 // If you're on Qt6, change the import above to just:
-//   import QtQuick.Shapes
+//   import QtQuick
 
 // Minimal pseudo-3D straight road strip for a dashboard.
 // Single input: vehicleSpeed. No track, no curves, no user control.
-// Road surface uses QtQuick.Shapes (GPU scene-graph geometry, NOT the
-// software Canvas/QPainter path) so each segment is a real slanted
-// trapezoid instead of a flat-sided rectangle -- that's what removes
-// the "chunky staircase" look on the road edges.
+//
+// PERFORMANCE REFACTOR NOTE:
+// The ground layer (sky, grass bands, road surface, lane dividers, edge
+// lines) used to be built every 16ms as SVG path strings fed into 4
+// QtQuick.Shapes items + a 50-item Repeater of Rectangles. On Qt 5.12's
+// Shapes "Generic" renderer (what you get on essentially every embedded/
+// ES2 GPU), every PathSvg.path assignment forces a full CPU-side
+// re-triangulation of the path and a fresh geometry upload -- that's the
+// ~18fps culprit, not "JS in general".
+//
+// That whole layer is now ONE ShaderEffect (pseudoroad.frag) that computes
+// the ground pattern analytically per-pixel by inverting the perspective
+// projection (see project()/the shader for the derivation). It has zero
+// per-frame JS/CPU geometry cost -- it just reads uPosition, which is a
+// live binding to `position`, so it repaints itself automatically as
+// position changes. updateStrips() no longer touches ground geometry at
+// all; it only still positions the roadside sprites (Image items stay as
+// real GPU-composited textured quads -- already cheap, not worth shader-
+// izing).
 //
 // Layers, back to front:
-//   sky -> base grass fill -> alternating grass bands -> road trapezoids -> roadside sprites -> traffic cars
+//   ground shader (sky+grass+road+dividers+edges) -> clouds -> horizon
+//   stripe -> roadside sprites -> traffic cars
 
 Item {
     id: pseudoRoad
@@ -150,8 +165,8 @@ Item {
         }
         return total
     }
-
-    readonly property int numLines: 80
+    //Change for chonk loading
+    readonly property int numLines: 50
     readonly property real horizonY: height * 0.42
     property string laneMarkingColor: "#ffffff"
     property real laneMarkingWidthNear: 35
@@ -181,24 +196,64 @@ Item {
 
     property real position: 0
 
-    // Worst case: half the segments show a dash (alternating on/off),
-    // times 2 divider lines (left + right).
-    readonly property int laneDividerSlotCount: numLines + 4
-
-    // Edge lines are visible on EVERY segment (no dash gaps), on both
-    // sides -- so exactly numLines * 2 are needed each frame.
-    readonly property int edgeLineSlotCount: numLines * 2 + 2
-
     // Internal: live traffic car state (worldZ + lane per active car).
     // Rebuilt whenever trafficDefs changes.
     property var _trafficState: []
 
-    Rectangle {
+    // --- Ground layer: sky + grass + road + lane dividers + edge lines ---
+    // Replaces what used to be: sky Rectangle, grassStrips Repeater,
+    // roadShapeOn, roadShapeOff, laneDividerShape, edgeLineShape.
+    // See pseudoroad.frag for the per-pixel math. Everything here is a
+    // live property binding -- there is no per-frame JS work for this
+    // layer at all; it repaints itself off of `position` automatically.
+    ShaderEffect {
+        id: groundShader
         anchors.fill: parent
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: skyColorTop }
-            GradientStop { position: 0.33; color: skyColorBottom }
-        }
+
+        property real uWidth: width
+        property real uHeight: height
+        // IMPORTANT: uPosition must NOT be the raw, ever-growing
+        // pseudoRoad.position. This device's driver doesn't define
+        // GL_FRAGMENT_PRECISION_HIGH, so every "highp" in the fragment
+        // shader silently downgrades to mediump -- which only guarantees
+        // ~10 bits of mantissa (exact integers only up to ~1024). Left
+        // unwrapped, position blows past that within a few seconds of
+        // driving and floor()/mod() in the shader start producing
+        // garbage -- that's the "works for 5s, then freezes into two
+        // fixed lines" symptom.
+        //
+        // Fix: wrap it on the CPU (JS does real double precision, so
+        // this is exact) to a small window before it ever reaches the
+        // GPU. The wrap period must be a multiple of 2*segmentLength so
+        // the on/off parity pattern doesn't skip or jump at the wrap --
+        // shifting the shader's numerator by an exact even multiple of
+        // segmentLength changes floor()/mod(...,2.0) by nothing at all.
+        property real uPosition: pseudoRoad.position % (pseudoRoad.segmentLength * 2.0)
+        property real uZNear: pseudoRoad.zNear
+        property real uSegmentLength: pseudoRoad.segmentLength
+        property real uHorizonY: pseudoRoad.horizonY
+        property real uRoadWidthNear: pseudoRoad.roadWidthNear
+        property real uLaneMarkingWidthNear: pseudoRoad.laneMarkingWidthNear
+        property real uEdgeMarkingWidthNear: pseudoRoad.edgeMarkingWidthNear
+        property real uShowLaneDividers: pseudoRoad.showLaneDividers ? 1.0 : 0.0
+        property real uShowEdgeLines: pseudoRoad.showEdgeLines ? 1.0 : 0.0
+
+        property color uSkyColorTop: pseudoRoad.skyColorTop
+        property color uSkyColorBottom: pseudoRoad.skyColorBottom
+        property color uRoadColorOn: pseudoRoad.roadColorOn
+        property color uRoadColorOff: pseudoRoad.roadColorOff
+        property color uTerrainColorOn: pseudoRoad.terrainColorOn
+        property color uTerrainColorOff: pseudoRoad.terrainColorOff
+        property color uLaneMarkingColor: pseudoRoad.laneMarkingColor
+        property color uEdgeMarkingColor: pseudoRoad.edgeMarkingColor
+
+        // ShaderEffect.fragmentShader wants literal GLSL source text, not
+        // a file path -- so we read the .frag file's contents in with a
+        // synchronous XMLHttpRequest (the standard QML idiom for this).
+        // Qt.resolvedUrl() resolves "pseudoroad.frag" relative to this
+        // .qml file's location; switch to "qrc:/pseudoroad.frag" if you
+        // bundle it as a Qt resource instead.
+        fragmentShader: pseudoRoad.loadShaderSource(Qt.resolvedUrl("pseudoroad.frag"))
     }
 
     // Drifting cloud cover. Two copies of the source image placed
@@ -265,115 +320,6 @@ Item {
         source: horizonStripeSource
         x: 0; y: 256; z: 1
     }
-    Repeater {
-        id: grassStrips
-        model: pseudoRoad.numLines
-        delegate: Rectangle { }
-    }
-
-    // Road surface: one Shape per segment, each holding a single
-    // trapezoid (near-left, near-right, far-right, far-left). Because
-    // consecutive segments share an exact edge (this one's "far" pair
-    // equals the next one's "near" pair), the whole road reads as one
-    // continuous slanted edge instead of a stack of steps.
-    Repeater {
-        id: strips
-        model: pseudoRoad.numLines
-        delegate: Shape {
-            id: seg
-            x: 0
-            y: 0
-            width: pseudoRoad.width
-            height: pseudoRoad.height
-            antialiasing: true
-
-            property real nearY: 0
-            property real farY: 0
-            property real nearHalfW: 0
-            property real farHalfW: 0
-            property real centerX: pseudoRoad.width / 2
-            property color fillColor: "#b0b0b0"
-
-            ShapePath {
-                fillColor: seg.fillColor
-                strokeWidth: -1   // no outline -- avoids a visible seam between segments
-                startX: seg.centerX - seg.nearHalfW; startY: seg.nearY
-                PathLine { x: seg.centerX + seg.nearHalfW; y: seg.nearY }
-                PathLine { x: seg.centerX + seg.farHalfW;  y: seg.farY }
-                PathLine { x: seg.centerX - seg.farHalfW;  y: seg.farY }
-                PathLine { x: seg.centerX - seg.nearHalfW; y: seg.nearY }
-            }
-        }
-    }
-
-    // Dashed lane dividers: same tapering trapezoid trick as the road,
-    // just narrow and offset from center. Pooled like sprites -- only
-    // shown on segments where the dash is "on", hidden otherwise.
-    Repeater {
-        id: laneDividers
-        model: pseudoRoad.laneDividerSlotCount
-        delegate: Shape {
-            id: dseg
-            x: 0
-            y: 0
-            width: pseudoRoad.width
-            height: pseudoRoad.height
-            antialiasing: true
-            visible: false
-
-            property real nearY: 0
-            property real farY: 0
-            property real nearHalfW: 0
-            property real farHalfW: 0
-            property real nearCenterX: 0
-            property real farCenterX: 0
-            property color fillColor: pseudoRoad.laneMarkingColor
-
-            ShapePath {
-                fillColor: dseg.fillColor
-                strokeWidth: -1
-                startX: dseg.nearCenterX - dseg.nearHalfW; startY: dseg.nearY
-                PathLine { x: dseg.nearCenterX + dseg.nearHalfW; y: dseg.nearY }
-                PathLine { x: dseg.farCenterX + dseg.farHalfW;  y: dseg.farY }
-                PathLine { x: dseg.farCenterX - dseg.farHalfW;  y: dseg.farY }
-                PathLine { x: dseg.nearCenterX - dseg.nearHalfW; y: dseg.nearY }
-            }
-        }
-    }
-
-    // Edge lines: same tapering trapezoid trick, but always visible --
-    // they toggle POSITION (in/out) each segment instead of visibility.
-    Repeater {
-        id: edgeLines
-        model: pseudoRoad.edgeLineSlotCount
-        delegate: Shape {
-            id: eseg
-            x: 0
-            y: 0
-            width: pseudoRoad.width
-            height: pseudoRoad.height
-            antialiasing: true
-            visible: false
-
-            property real nearY: 0
-            property real farY: 0
-            property real nearHalfW: 0
-            property real farHalfW: 0
-            property real nearCenterX: 0
-            property real farCenterX: 0
-            property color fillColor: pseudoRoad.edgeMarkingColor
-
-            ShapePath {
-                fillColor: eseg.fillColor
-                strokeWidth: -1
-                startX: eseg.nearCenterX - eseg.nearHalfW; startY: eseg.nearY
-                PathLine { x: eseg.nearCenterX + eseg.nearHalfW; y: eseg.nearY }
-                PathLine { x: eseg.farCenterX + eseg.farHalfW;  y: eseg.farY }
-                PathLine { x: eseg.farCenterX - eseg.farHalfW;  y: eseg.farY }
-                PathLine { x: eseg.nearCenterX - eseg.nearHalfW; y: eseg.nearY }
-            }
-        }
-    }
 
     Repeater {
         id: sprites
@@ -398,11 +344,26 @@ Item {
         }
     }
 
+    // Synchronously reads a local/qrc file's text content -- used once at
+    // binding-evaluation time to pull pseudoroad.frag's GLSL source into
+    // the fragmentShader property (which requires literal source text,
+    // not a file path). Runs once, not per-frame, so the sync XHR here
+    // costs nothing at runtime.
+    function loadShaderSource(url) {
+        var xhr = new XMLHttpRequest()
+        xhr.open("GET", url, false)
+        xhr.send()
+        return xhr.responseText
+    }
+
     // Projects one world distance z to a screen Y and a 0..1 scale factor.
     // scale = zNear/z: 1 at the closest segment, shrinking toward 0 with
     // distance -- this 1/z falloff is what makes screenY bunch up near
     // the horizon instead of spacing out evenly, and what sprites use to
     // shrink/converge as they "approach" from the horizon.
+    //
+    // The ground shader inverts exactly this function (solve for z given
+    // screenY) to get its per-pixel segment index -- see pseudoroad.frag.
     function project(z) {
         var scale = zNear / z
         var screenY = horizonY + (height - horizonY) * scale
@@ -555,6 +516,14 @@ Item {
         }
     }
 
+    // NOTE: this used to also rebuild the SVG path strings for the road
+    // surface, lane dividers, and edge lines (roadOnParts/roadOffParts/
+    // dividerParts/edgeParts + a 50-item grass Repeater loop). All of that
+    // is now handled by groundShader/pseudoroad.frag with zero per-frame
+    // JS cost, driven purely off the `position` binding. This function's
+    // only remaining job is placing the roadside sprite Image pool, which
+    // still needs the per-segment sample table since sprites are discrete
+    // textured items, not shader-drawn.
     function updateStrips() {
         // `position` grows forever as the vehicle drives -- wrap it back
         // down periodically rather than let it climb unbounded for the
@@ -584,98 +553,9 @@ Item {
         }
 
         var spriteSlot = 0
-        var dividerSlot = 0
-        var edgeSlot = 0
 
         for (var j = 0; j < numLines; j++) {
             var near = samples[j]
-            var far = samples[j + 1]
-            var stripeOn = (baseIndex + j) % 2 === 0
-            var stripHeight = Math.max(near.screenY - far.screenY, 1)
-            var roadColor = stripeOn ? roadColorOn : roadColorOff
-            var terrainColor = stripeOn ? terrainColorOn : terrainColorOff
-            // grass/sand band: full width, flat rectangle is fine here since
-            // there's no side-taper to smooth -- it spans the full width
-            var g = grassStrips.itemAt(j)
-            if (g) {
-                g.x = 0
-                g.y = far.screenY
-                g.width = width
-                g.height = stripHeight
-                g.color = terrainColor
-            }
-
-            // road trapezoid: near edge at this segment's screenY/width,
-            // far edge at the next segment's -- gives a real slanted side
-            var seg = strips.itemAt(j)
-            if (seg) {
-                seg.nearY = near.screenY
-                seg.farY = far.screenY
-                seg.nearHalfW = Math.max(roadWidthNear * near.scale, 1) / 2
-                seg.farHalfW = Math.max(roadWidthNear * far.scale, 1) / 2
-                seg.fillColor = roadColor
-            }
-
-            // dashed lane dividers: reuse the road's own on/off banding as
-            // the dash rhythm, so the dashes move at exactly the same
-            // pace as the road surface stripes
-            if (showLaneDividers && stripeOn) {
-                var sides = [-1, 1]
-                for (var s = 0; s < 2; s++) {
-                    var dSide = sides[s]
-                    var dSlot = laneDividers.itemAt(dividerSlot)
-                    dividerSlot++
-                    if (dSlot) {
-                        var nearRoadW = roadWidthNear * near.scale
-                        var farRoadW = roadWidthNear * far.scale
-
-                        dSlot.nearCenterX = width / 2 + dSide * (nearRoadW / 6)
-                        dSlot.farCenterX = width / 2 + dSide * (farRoadW / 6)
-                        dSlot.nearHalfW = Math.max(laneMarkingWidthNear * near.scale, 0.5) / 2
-                        dSlot.farHalfW = Math.max(laneMarkingWidthNear * far.scale, 0.5) / 2
-                        dSlot.nearY = near.screenY
-                        dSlot.farY = far.screenY
-                        dSlot.visible = true
-                    }
-                }
-            }
-
-            // edge lines: always visible (no gaps), but the on/off flag
-            // now controls POSITION instead of visibility -- "on" pushes
-            // the line inward by its own width, "off" sits flush right
-            // against the true road edge, giving an alternating curb look
-            if (showEdgeLines) {
-                var edgeSides = [-1, 1]
-                for (var e = 0; e < 2; e++) {
-                    var eSide = edgeSides[e]
-                    var eSlot = edgeLines.itemAt(edgeSlot)
-                    edgeSlot++
-                    if (eSlot) {
-                        var nearEdgeGap = (roadWidthNear * near.scale) / 2
-                        var farEdgeGap = (roadWidthNear * far.scale) / 2
-                        var nearHalf = Math.max(edgeMarkingWidthNear * near.scale, 0.5) / 2
-                        var farHalf = Math.max(edgeMarkingWidthNear * far.scale, 0.5) / 2
-                        var nearFullW = nearHalf * 2
-                        var farFullW = farHalf * 2
-
-                        // "off": outer face of the line sits flush at the
-                        // true edge, extending inward by its half-width
-                        var nearFlush = eSide * (nearEdgeGap - nearHalf)
-                        var farFlush = eSide * (farEdgeGap - farHalf)
-                        // "on": pushed inward one additional full width
-                        var nearPushed = nearFlush - eSide * nearFullW
-                        var farPushed = farFlush - eSide * farFullW
-
-                        eSlot.nearCenterX = width / 2 + (stripeOn ? nearPushed : nearFlush)
-                        eSlot.farCenterX = width / 2 + (stripeOn ? farPushed : farFlush)
-                        eSlot.nearHalfW = nearHalf
-                        eSlot.farHalfW = farHalf
-                        eSlot.nearY = near.screenY
-                        eSlot.farY = far.screenY
-                        eSlot.visible = true
-                    }
-                }
-            }
 
             // roadside sprites: each def is checked independently against
             // its OWN interval/offset, so a dense "condensed" sprite (e.g.
@@ -713,8 +593,8 @@ Item {
                 // Nearer segments (small j) must always paint over farther
                 // ones, regardless of which def or pool slot placed them --
                 // pool-slot order alone doesn't reflect depth, so we set
-                // z explicitly. +1 keeps every sprite above the road/grass/
-                // divider layers (which sit at the default z of 0).
+                // z explicitly. +1 keeps every sprite above the ground
+                // shader (which sits at the default z of 0).
                 slot.z = (numLines - j) + 1
             }
         }
@@ -723,18 +603,6 @@ Item {
         for (; spriteSlot < spriteSlotCount; spriteSlot++) {
             var unused = sprites.itemAt(spriteSlot)
             if (unused) unused.visible = false
-        }
-
-        // hide any pooled divider slots we didn't use this frame
-        for (; dividerSlot < laneDividerSlotCount; dividerSlot++) {
-            var unusedDivider = laneDividers.itemAt(dividerSlot)
-            if (unusedDivider) unusedDivider.visible = false
-        }
-
-        // hide any pooled edge-line slots we didn't use this frame
-        for (; edgeSlot < edgeLineSlotCount; edgeSlot++) {
-            var unusedEdge = edgeLines.itemAt(edgeSlot)
-            if (unusedEdge) unusedEdge.visible = false
         }
     }
 
