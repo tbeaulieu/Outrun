@@ -49,18 +49,26 @@ Item {
             { key: "blue",           label: "Blue",        type: "number", min: 0, max: 255, step: 1, wrap: true } ] },
 
         { name: "Drive", rows: [
-            { key: "speedunits",     label: "Speed units", type: "enum",   options: ["KMH", "MPH", "BOTH"] } ] },
+            { key: "speedunits",     label: "Speed units", type: "enum",   options: ["KMH", "MPH"] } ] },
 
+        // High limits are always Celsius, 0 = no warning
         { name: "Coolant", rows: [
-            { key: "waterunits",     label: "Units", type: "enum",   options: ["F", "C"] } ] },
+            { key: "waterunits",     label: "Units", type: "enum",   options: ["F", "C"] },
+            { key: "waterhigh",      label: "High",  type: "number", min: 0, step: 1 } ] },
+
+        // Low is percent, 0 = no warning
+        { name: "Fuel", rows: [
+            { key: "fuellow",        label: "Low",   type: "number", min: 0, max: 100, step: 1 } ] },
 
         { name: "Oil temp", rows: [
             { key: "oiltempshow",    label: "Show",  type: "enum",   options: ["OFF", "ON"] },
-            { key: "oiltempunits",   label: "Units", type: "enum",   options: ["F", "C"] } ] },
+            { key: "oiltempunits",   label: "Units", type: "enum",   options: ["F", "C"] },
+            { key: "oiltemphigh",    label: "High",  type: "number", min: 0, step: 1 } ] },
 
         { name: "Oil press", rows: [
             { key: "oilpressureshow",  label: "Show",  type: "enum",   options: ["OFF", "ON"] },
-            { key: "oilpressureunits", label: "Units", type: "enum",   options: ["PSI", "BAR"] } ] },
+            { key: "oilpressureunits", label: "Units", type: "enum",   options: ["PSI", "BAR"] },
+            { key: "oilpressurelow",   label: "Low",   type: "number", min: 0, step: 1 } ] },   // always bar, 0 = no warning
 
         // High / Low are always AFR (lambda x 14.7), 0 = no warning
         { name: "AFR", rows: [
@@ -264,8 +272,6 @@ Item {
                     menu.height - th.footH - 8 - height)
         Behavior on y { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
 
-        // opacity: !menu.open ? 0 : (menu.level === 1 ? 1.0 : 0.2)
-        Behavior on opacity { NumberAnimation { duration: 160 } }
         Rectangle {                                 // solid backing: nothing shows through
             x: -6; y: -6
             width: fly.width + 12

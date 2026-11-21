@@ -85,7 +85,7 @@ Item {
     property bool right_joystick: inputs & 0x40000000 || root.udp_right
 
     property int odometer: rpmtest.odometer0data/10 //Overridden by Outrun.qml: km or miles to match speedunits, div by 10 to get 6 digits
-    property int tripmeter: rpmtest.tripmileage0data*0.62
+    property int tripmeter: rpmtest.tripmileage0data*0.621371
     property real value: 0
     property real shiftvalue: 0
 
@@ -116,7 +116,21 @@ Item {
     property int oilpressureshow: 1       // 0 = hide the oil pressure readout
     readonly property real afr: o2 * 14.7
     readonly property bool afrWarn: afrshow === 1 && ((afrhigh > 0 && afr > afrhigh) || (afrlow > 0 && afr < afrlow))
-    property bool afrBlink: false
+
+    // Warnings: the readout turns red and flashes. Limits are Celsius / bar, 0 = off.
+    readonly property bool waterWarn: waterhigh > 0 && watertemp >= waterhigh
+    readonly property bool oiltempWarn: oiltempshow === 1 && oiltemphigh > 0 && oiltemp >= oiltemphigh
+    readonly property bool oilpressureWarn: oilpressureshow === 1 && oilpressurelow > 0 && oilpressure < oilpressurelow
+    readonly property bool fuelWarn: fuellow > 0 && fuel <= fuellow
+    readonly property bool anyWarn: waterWarn || oiltempWarn || oilpressureWarn || afrWarn || fuelWarn
+    property bool warnBlink: false        // shared so all flashing readouts stay in step
+    Timer{
+        running: root.anyWarn
+        interval: 300
+        repeat: true
+        onTriggered: root.warnBlink = !root.warnBlink
+        onRunningChanged: if(!running) root.warnBlink = false
+    }
     property real map: rpmtest.mapdata
     property real maf: rpmtest.mafdata
 
@@ -132,7 +146,7 @@ Item {
 
     property real batteryvoltage: rpmtest.batteryvoltagedata
 
-    property int mph: (speed * 0.62)
+    property int mph: Math.round(speed * 0.621371)
 
     property int gearpos: rpmtest.geardata
 
@@ -295,7 +309,7 @@ Item {
         font.pixelSize: 80
         horizontalAlignment: Text.AlignRight
         width: 140
-        text: if (root.speedunits === 0) root.speed.toFixed(0); else (root.speed*.62).toFixed(0)
+        text: if (root.speedunits === 0) root.speed.toFixed(0); else (root.speed*.621371).toFixed(0)
     }
     Text{
         x: 23;
@@ -306,7 +320,7 @@ Item {
         font.pixelSize: 80
         horizontalAlignment: Text.AlignRight
         width: 140
-        text: if (root.speedunits === 0) root.speed.toFixed(0); else (root.speed*.62).toFixed(0)
+        text: if (root.speedunits === 0) root.speed.toFixed(0); else (root.speed*.621371).toFixed(0)
     }
     Image{
         id: speed_units
@@ -496,13 +510,14 @@ Item {
     }
     Item{
         x: 576; y: 419
+        opacity: root.fuelWarn && root.warnBlink ? 0.35 : 1     // low fuel: label turns red and the gauge flashes
         Text{
             x:0;y:0;z:1
             id: fuel_label
             text: 'FUEL'
             font.family: sonicMono.name
             font.pixelSize: 26
-            color: "#F3F300"
+            color: root.fuelWarn ? "#FF0000" : "#F3F300"
         }
         Text{
             x:3;y:3;z:0
@@ -546,39 +561,40 @@ Item {
 
         Item{
             id: coolant_meter
-            x: 16; y:25
+            x: 12; y:25
             height: 30
+            opacity: root.waterWarn && root.warnBlink ? 0.35 : 1
             Image{
                 x: 0; y: 0
                 source: './img/coolant_label.png'
             }
             Text{
-                x: 50; y: 0; z: 2
+                x: 91; y: 0; z: 2
                 text:root.waterunits === 1 ? root.watertemp.toFixed(0) :  easyFtemp(root.watertemp)
                 font.family: sonicMono.name
                 font.pixelSize: 24
-                color: "#F3F300"
+                color: root.waterWarn ? "#FF0000" : "#F3F300"
                 horizontalAlignment: Text.AlignRight
-                width: 100
+                width: 58
             }
             Text{
-                x: 148; y: 12; z:2
+                x: 151; y: 12; z:2
                 text: root.waterunits === 1 ? 'C' : 'F'
                 font.family: sonicMono.name
                 font.pixelSize: 12
                 color: "#F3F300"
             }
             Text{
-                x: 52; y: 2; z: 1
+                x: 93; y: 2; z: 1
                 text:root.waterunits === 1 ? root.watertemp.toFixed(0) :  easyFtemp(root.watertemp)
                 font.family: sonicMono.name
                 font.pixelSize: 24
                 color: "#000000"
                 horizontalAlignment: Text.AlignRight
-                width: 100
+                width: 58
             }
             Text{
-                x: 150; y: 14; z:1
+                x: 153; y: 14; z:1
                 text: root.waterunits === 1 ? 'C' : 'F'
                 font.family: sonicMono.name
                 font.pixelSize: 12
@@ -588,40 +604,41 @@ Item {
         }
         Item{
             id: oilpress_meter
-            x: 175; y:25
+            x: 183; y:25
             height: 30
+            opacity: root.oilpressureWarn && root.warnBlink ? 0.35 : 1
             visible: root.oilpressureshow === 1
             Image{
                 x: 0; y: 0
                 source: './img/oilpress_label.png'
             }
             Text{
-                x: 52; y: 0; z: 2
+                x: 91; y: 0; z: 2
                 text: if(root.oilpressureunits === 1) root.oilpressure.toFixed(1); else (root.oilpressure.toFixed(1) * 14.504).toFixed(0)
                 font.family: sonicMono.name
                 font.pixelSize: 24
-                color: "#F3F300"
+                color: root.oilpressureWarn ? "#FF0000" : "#F3F300"
                 horizontalAlignment: Text.AlignRight
-                width: 100
+                width: 58
             }
             Text{
-                x: 150; y: 12; z:2
+                x: 151; y: 12; z:2
                 text: root.oilpressureunits === 0 ? 'PSI' : 'BAR'
                 font.family: sonicMono.name
                 font.pixelSize: 12
                 color: "#F3F300"
             }
             Text{
-                x: 52; y: 2; z: 1
+                x: 93; y: 2; z: 1
                 text: if(root.oilpressureunits === 1) root.oilpressure.toFixed(1); else (root.oilpressure.toFixed(1) * 14.504).toFixed(0)
                 font.family: sonicMono.name
                 font.pixelSize: 24
                 color: "#000000"
                 horizontalAlignment: Text.AlignRight
-                width: 100
+                width: 58
             }
             Text{
-                x: 150; y: 14; z:1
+                x: 153; y: 14; z:1
                 text: root.oilpressureunits === 0 ? 'PSI' : 'BAR'
                 font.family: sonicMono.name
                 font.pixelSize: 12
@@ -630,40 +647,41 @@ Item {
         }
         Item{
             id: oiltemp_meter
-            x: 460; y:25
+            x: 422; y:25
             height: 30
+            opacity: root.oiltempWarn && root.warnBlink ? 0.35 : 1
             visible: root.oiltempshow === 1
             Image{
                 x: 0; y: 0
                 source: './img/oiltemp_label.png'
             }
             Text{
-                x: 60; y: 0; z: 2
+                x: 103; y: 0; z: 2
                 text: root.oiltempunits === 1 ? root.oiltemp.toFixed(0) : easyFtemp(root.oiltemp)
                 font.family: sonicMono.name
                 font.pixelSize: 24
-                color: "#F3F300"
+                color: root.oiltempWarn ? "#FF0000" : "#F3F300"
                 horizontalAlignment: Text.AlignRight
-                width: 100
+                width: 58
             }
             Text{
-                x: 158; y: 12; z:2
+                x: 163; y: 12; z:2
                 text: root.oiltempunits === 1 ? 'C' : 'F'
                 font.family: sonicMono.name
                 font.pixelSize: 12
                 color: "#F3F300"
             }
             Text{
-                x: 60; y: 2; z: 1
+                x: 105; y: 2; z: 1
                 text: root.oiltempunits === 1 ? root.oiltemp.toFixed(0) : easyFtemp(root.oiltemp)
                 font.family: sonicMono.name
                 font.pixelSize: 24
                 color: "#000000"
                 horizontalAlignment: Text.AlignRight
-                width: 100
+                width: 58
             }
             Text{
-                x: 158; y: 14; z:1
+                x: 165; y: 14; z:1
                 text: root.oiltempunits === 1 ? 'C' : 'F'
                 font.family: sonicMono.name
                 font.pixelSize: 12
@@ -672,40 +690,33 @@ Item {
         }
         Item{
             id: wideband_meter
-            x: 633; y:25
+            x: 605; y:25
             height: 30
             visible: root.afrshow === 1
             // lambda in, shown as AFR (x 14.7) or lambda; red and flashing outside the AFR limits
             readonly property string reading: root.afrunits === 1 ? root.afr.toFixed(1) : root.o2.toFixed(2)
-            opacity: root.afrWarn && root.afrBlink ? 0.35 : 1
-            Timer{
-                running: root.afrWarn
-                interval: 300
-                repeat: true
-                onTriggered: root.afrBlink = !root.afrBlink
-                onRunningChanged: if(!running) root.afrBlink = false
-            }
+            opacity: root.afrWarn && root.warnBlink ? 0.35 : 1
             Image{
                 x: 0; y: 0
                 source: './img/wideband_label.png'
             }
             Text{
-                x: 62; y: 3; z: 2
+                x: 102; y: 0; z: 2
                 text: wideband_meter.reading
                 font.family: sonicMono.name
-                font.pixelSize: 20
+                font.pixelSize: 24
                 color: root.afrWarn ? "#FF0000" : "#F3F300"
                 horizontalAlignment: Text.AlignRight
-                width: 102
+                width: 77
             }
             Text{
-                x: 62; y: 5; z: 1
+                x: 104; y: 2; z: 1
                 text: wideband_meter.reading
                 font.family: sonicMono.name
-                font.pixelSize: 20
+                font.pixelSize: 24
                 color: "#000000"
                 horizontalAlignment: Text.AlignRight
-                width: 102
+                width: 77
             }
         }
 
@@ -728,7 +739,7 @@ Item {
             font.family: spaceHarrier.name
             font.pixelSize: 14
             color: "#FF0000"
-            opacity: root.brake ? 1 : 0
+            opacity: (root.brake || root.handbrake) ? 1 : 0
         }
         Text{
             x:0;y:30;z:0
@@ -802,11 +813,31 @@ Item {
             color: "#FF0000"
             opacity: root.battery ? 1 : 0
         }
+        Text{
+            x:0;y:150;z:0
+            id: oil_light
+            style: Text.Outline; styleColor: "#000000"   // sits over the scenery, so it needs an edge
+            text: 'Oil'
+            font.family: spaceHarrier.name
+            font.pixelSize: 14
+            color: "#FF0000"
+            opacity: root.oil ? 1 : 0
+        }
+        Text{
+            x:0;y:165;z:0
+            id: door_light
+            style: Text.Outline; styleColor: "#000000"   // sits over the scenery, so it needs an edge
+            text: 'Door'
+            font.family: spaceHarrier.name
+            font.pixelSize: 14
+            color: "#F3F300"
+            opacity: root.doorswitch ? 1 : 0
+        }
  
     }
     Image{
         id: mainbeam_light
-        x: 380; y: 30
+        x: 373; y: 27
         source: './img/highbeams.png'
         opacity: root.mainbeam ? 1 : 0
     }
@@ -818,11 +849,12 @@ Item {
     // or "" when the menu is closed / browsing groups.
     readonly property int focusSpot: {
         var k = root.settingsFocus
-        if (k === "waterunits") return 0
-        if (k === "oilpressureunits" || k === "oilpressureshow") return 1
-        if (k === "oiltempunits" || k === "oiltempshow") return 2
+        if (k === "waterunits" || k === "waterhigh") return 0
+        if (k === "oilpressureunits" || k === "oilpressureshow" || k === "oilpressurelow") return 1
+        if (k === "oiltempunits" || k === "oiltempshow" || k === "oiltemphigh") return 2
         if (k === "speedunits") return 3
         if (k === "afrshow" || k === "afrunits" || k === "afrhigh" || k === "afrlow") return 4
+        if (k === "fuellow") return 5
         return -1
     }
     property real focusPulse: 1
@@ -837,13 +869,14 @@ Item {
 
     Rectangle {
         id: settings_focus_box
-        // x, y, width, height: coolant, oil pressure, oil temp, speed, wideband
+        // x, y, width, height: coolant, oil pressure, oil temp, speed, wideband, fuel
         readonly property var spots: [
-            [  8, 15, 162, 46],
-            [167, 15, 196, 46],
-            [452, 15, 180, 46],
+            [  5, 15, 175, 46],
+            [176, 15, 194, 46],
+            [415, 15, 187, 46],
             [ 12, 372, 226, 94],
-            [625, 15, 173, 46]
+            [598, 15, 193, 46],
+            [566, 409, 230, 50]
         ]
         property int spot: 0
         Connections {

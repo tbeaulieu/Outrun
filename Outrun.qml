@@ -18,11 +18,11 @@ Item{
     property bool udp_down:udp_message&0x02
     property bool udp_left:udp_message&0x04
     property bool udp_right:udp_message&0x08
-    property int odometer:if(speedunits==0)rpmtest.odometer0data;else rpmtest.odometer0data*0.62
-    property int tripmeter:if(speedunits==0)rpmtest.tripmileage0data;else rpmtest.tripmileage0data*0.62
+    property int odometer:if(speedunits==0)rpmtest.odometer0data;else rpmtest.odometer0data*0.621371
+    property int tripmeter:if(speedunits==0)rpmtest.tripmileage0data;else rpmtest.tripmileage0data*0.621371
     property real rpm:rpmtest.rpmdata
     property real speed:rpmtest.speeddata
-    property int speedunits:1
+    property int speedunits:1             // 0 = KMH, 1 = MPH
     property real watertemp:rpmtest.watertempdata
     property real fuel:rpmtest.fueldata
     property real o2:rpmtest.o2data
@@ -59,16 +59,17 @@ Item{
     property int oilpressureshow:1        // 0 = hide the oil pressure readout
 
     // Defaults for a fresh install (no JSON and no old .txt to migrate)
+    // Limits are always Celsius / bar, whatever units are displayed; 0 = no warning.
     property int waterlow:0
-    property int waterhigh:0
+    property int waterhigh:105
     property int waterunits:1
-    property int fuellow:0
+    property int fuellow:10               // percent; 0 = no warning
     property int fuelhigh:0
     property int fuelunits:1
     property int oiltemplow:0
-    property int oiltemphigh:0
+    property int oiltemphigh:130
     property int oiltempunits:1
-    property int oilpressurelow:0
+    property int oilpressurelow:1         // bar
     property int oilpressurehigh:0
     property int oilpressureunits:0
     property real night_time_hue:0
@@ -119,18 +120,16 @@ Item{
         { key: "colorscheme",      type: "string" },
         { key: "red" },  { key: "green" },  { key: "blue" },
         { key: "waterunits" },     { key: "oiltempunits" },    { key: "oilpressureunits" },
+        { key: "waterhigh" },      { key: "oiltemphigh" },     { key: "oilpressurelow" },
+        { key: "fuellow" },
         { key: "speedunits" },
         { key: "afrshow" },        { key: "afrunits" },        { key: "afrhigh" },        { key: "afrlow" },
         { key: "oiltempshow" },    { key: "oilpressureshow" },
-        // the Outrun dial has no limits or warnings, so nothing uses these
+        // the Outrun dial has nothing that uses these
         { key: "waterlow",         disabled: true },
-        { key: "waterhigh",        disabled: true },
-        { key: "fuellow",          disabled: true },
         { key: "fuelhigh",         disabled: true },
         { key: "fuelunits",        disabled: true },
         { key: "oiltemplow",       disabled: true },
-        { key: "oiltemphigh",      disabled: true },
-        { key: "oilpressurelow",   disabled: true },
         { key: "oilpressurehigh",  disabled: true },
         { key: "rpmlimit",         disabled: true },
         { key: "shiftvalue",       disabled: true },
@@ -197,6 +196,7 @@ Item{
                     var k = editableSettings[i].key
                     if (obj.hasOwnProperty(k)) applyConfigValue(k, obj[k])
                 }
+                if (root.speedunits !== 0) root.speedunits = 1     // no "both" mode on this dial
                 return "json"
             } catch (e) {
                 console.log("config JSON invalid, keeping defaults and NOT overwriting: " + e)
@@ -206,8 +206,14 @@ Item{
         var old = readLines(config_file, 26, true)
         if (old.length === 0) old = readLines(config_file_v4, 26, true)
         if (old.length > 0) {
-            for (var j = 0; j < old.length && j < legacyKeys.length; j++)
-                if (legacyKeys[j] && old[j] !== "") applyConfigValue(legacyKeys[j], old[j])
+            // The old dash had no warnings, so its limit values never did anything and are
+            // not imported: a number entered without effect could now flash permanently.
+            var unusedBefore = ["waterhigh", "oiltemphigh", "oilpressurelow", "fuellow", "afrhigh", "afrlow"]
+            for (var j = 0; j < old.length && j < legacyKeys.length; j++) {
+                var lk = legacyKeys[j]
+                if (lk && old[j] !== "" && unusedBefore.indexOf(lk) < 0) applyConfigValue(lk, old[j])
+            }
+            if (root.speedunits !== 0) root.speedunits = 1     // no "both" mode on this dial
             return "legacy"
         }
         return "none"
