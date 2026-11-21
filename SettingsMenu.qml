@@ -51,7 +51,7 @@ Item {
         { name: "Drive", rows: [
             { key: "speedunits",     label: "Speed units", type: "enum",   options: ["KMH", "MPH"] } ] },
 
-        // High limits are always Celsius, 0 = no warning
+        // Temperature limits are in the units chosen for that readout (changing Units converts them), 0 = no warning
         { name: "Coolant", rows: [
             { key: "waterunits",     label: "Units", type: "enum",   options: ["F", "C"] },
             { key: "waterhigh",      label: "High",  type: "number", min: 0, step: 1 } ] },
